@@ -75,6 +75,7 @@ def main(_):
         "text-bison",
         "gpt-3.5-turbo",
         "gpt-4",
+        "llama3",
     }
     openai_api_key = _OPENAI_API_KEY.value
     palm_api_key = _PALM_API_KEY.value
@@ -82,12 +83,15 @@ def main(_):
     if optimizer_llm_name in {"gpt-3.5-turbo", "gpt-4"}:
         assert openai_api_key, "The OpenAI API key must be provided."
         openai.api_key = openai_api_key
-    else:
-        assert optimizer_llm_name == "text-bison"
+    elif optimizer_llm_name == "text-bison":
         assert (
             palm_api_key
         ), "A PaLM API key is needed when prompting the text-bison model."
         palm.configure(api_key=palm_api_key)
+    elif optimizer_llm_name == "llama3":
+        pass
+    else:
+        raise ValueError(f"Unknown optimizer LLM: {optimizer_llm_name}")
 
     # =================== create the result directory ==========================
     datetime_str = (
@@ -139,8 +143,7 @@ def main(_):
         optimizer_llm_dict.update(optimizer_finetuned_palm_dict)
         call_optimizer_server_func = call_optimizer_finetuned_palm_server_func
 
-    else:
-        assert optimizer_llm_name in {"gpt-3.5-turbo", "gpt-4"}
+    elif optimizer_llm_name in {"gpt-3.5-turbo", "gpt-4"}:
         optimizer_gpt_max_decode_steps = 1024
         optimizer_gpt_temperature = 1.0
 
@@ -154,6 +157,15 @@ def main(_):
             max_decode_steps=optimizer_gpt_max_decode_steps,
             temperature=optimizer_gpt_temperature,
         )
+    elif optimizer_llm_name == "llama3":
+        optimizer_llm_dict = dict()
+        optimizer_llm_dict["batch_size"] = 1
+        call_optimizer_server_func = functools.partial(
+            prompt_utils.call_ollama_server,
+            model="llama3",
+        )
+    else:
+        raise ValueError(f"Unknown optimizer LLM: {optimizer}")
 
     # ====================== try calling the servers ============================
     print("\n======== testing the optimizer server ===========")
@@ -180,18 +192,18 @@ def main(_):
     ):
         """Generate the meta-prompt for optimization.
 
-        Args:
-         old_value_pairs_set (set): the set of old (w, b, z) pairs.
-         X (np.array): the 1D array of x values.
-         y (np.array): the 1D array of y values.
-         num_input_decimals (int): the number of decimals for (w, b) in the
-           meta-prompt.
-         num_output_decimals (int): the number of decimals for z in the meta-prompt.
-         max_num_pairs (int): the maximum number of exemplars in the meta-prompt.
+    Args:
+     old_value_pairs_set (set): the set of old (w, b, z) pairs.
+     X (np.array): the 1D array of x values.
+     y (np.array): the 1D array of y values.
+     num_input_decimals (int): the number of decimals for (w, b) in the
+       meta-prompt.
+     num_output_decimals (int): the number of decimals for z in the meta-prompt.
+     max_num_pairs (int): the maximum number of exemplars in the meta-prompt.
 
-        Returns:
-          meta_prompt (str): the generated meta-prompt.
-        """
+    Returns:
+      meta_prompt (str): the generated meta-prompt.
+    """
         old_value_pairs_set = set(
             [  # pylint: disable=g-complex-comprehension
                 (
@@ -215,9 +227,10 @@ def main(_):
         old_value_pairs_substr = ""
         for w, b, z in old_value_pairs:
             old_value_pairs_substr += f"\ninput:\nw={w}, b={b}\nvalue:\n{z}\n"
-        meta_prompt = """
-  Now you will help me minimize a function with two input variables w, b. I have some (w, b) pairs and the function values at those points. The pairs are arranged in descending order based on their function values, where lower values are better.
-    """.strip()
+        meta_prompt = """Now you will help me minimize a function with two input variables w, b. 
+        I have some (w, b) pairs and the function values at those points. 
+        The pairs are arranged in descending order based on their function values, where lower values are better.
+        """.strip()
         meta_prompt += "\n\n"
         meta_prompt += old_value_pairs_substr.strip()
         meta_prompt += "\n\n"
@@ -232,7 +245,14 @@ def main(_):
         #     " values and do the computation."
         # )
         # meta_prompt += "\n\n"
-        meta_prompt += """Give me a new (w, b) pair that is different from all pairs above, and has a function value lower than any of the above. Do not write code. The output must end with a pair [w, b], where w and b are numerical values.
+        meta_prompt += """Give me one new (w, b) pair that is different from all pairs above, 
+and has a function value lower than any of the above. Do not write code. 
+The output must end with a pair [w, b], where w and b are numerical values.
+
+For example, if you want to propose w=1, b=2, you should write: [w=1, b=2]
+
+Never ever include any other response except the pair [w=w, b=b].
+Only ever produce one pair in your response.
     """.strip()
         return meta_prompt
 
@@ -250,13 +270,13 @@ def main(_):
     def parse_output(extracted_output):
         """Parse the extracted output 'w, b' string to np.array([w, b]).
 
-        Args:
-          extracted_output (str): the extracted output string, like '1.5, 2.5'.
+    Args:
+      extracted_output (str): the extracted output string, like '1.5, 2.5'.
 
-        Returns:
-          parsed_output (np.array): the parsed output in a numpy array, like [1.5,
-          2.5].
-        """
+    Returns:
+      parsed_output (np.array): the parsed output in a numpy array, like [1.5,
+      2.5].
+    """
         if not extracted_output:
             return
         extracted_values = []

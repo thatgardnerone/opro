@@ -16,6 +16,7 @@
 import time
 import google.generativeai as palm
 import openai
+from ollama import Client
 
 
 def call_openai_server_single_prompt(
@@ -130,3 +131,21 @@ def call_palm_server_from_cloud(
         return call_palm_server_from_cloud(
             input_text, max_decode_steps=max_decode_steps, temperature=temperature
         )
+
+
+def call_ollama_server(
+        input_text, model="llama3", stream=False, temperature=0.8
+):
+    """Connect to self-hosted Ollama server"""
+    assert isinstance(input_text, str)
+
+    client = Client(host="http://tgoml.netbird.selfhosted:11434")
+    response = client.chat(
+        model=model,
+        messages=[{"role": "user", "content": input_text}],
+        stream=stream,
+        options={"temperature": temperature},
+    )
+
+    return response['message']['content']
+
